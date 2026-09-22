@@ -1,0 +1,349 @@
+// ============================================================
+// Dr. Bharathi.P — Appointment Portal
+// Prisma schema (PostgreSQL)
+//
+// Notes:
+// - This schema is intentionally single-doctor for the MVP, but
+//   every model is scoped so a second Doctor could be added later
+//   (Section 80) without restructuring — Location/Schedule/Appointment
+//   all key off doctorId rather than assuming a global singleton.
+// - Enums map directly to the state machine in Section 13.
+// - Nothing here invents business data (hours, fees, etc.) —
+//   those are rows created via the admin dashboard, not schema defaults.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------
+// Auth / Admin (Section 36)
+// ------------------------------------------------------------
+
+enum AdminRole {
+  DOCTOR // Dr. Bharathi.P herself
+  STAFF  // future: front-desk / assistant login, not in MVP scope
+}
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  role         AdminRole @default(DOCTOR)
+  doctorId     String?
+  doctor       Doctor?   @relation(fields: [doctorId], references: [id])
+
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  auditLogs    AuditLog[]
+
+  @@index([doctorId])
+}
+
+// ------------------------------------------------------------
+// Doctor profile (Section 4, 37)
+// ------------------------------------------------------------
+
+model Doctor {
+  id              String   @id @default(cuid())
+  name            String   // "Dr. Bharathi.P" — placeholder until confirmed (Section 78)
+  title           String   // e.g. "Gynaecologist & Obstetrician"
+  bio             String?  @db.Text
+  qualifications  String?  @db.Text // store as TEXT; render as list client-side, or move to a Qualification[] later
+  specializations String[] // e.g. ["Obstetrics", "Gynaecology"]
+  phone           String?
+  email           String?
+  profileImageUrl String?
+
+  isPlaceholder   Boolean  @default(true) // true until doctor supplies verified info (Rule 1)
+
+  locations       PracticeLocation[]
+  services        Service[]
+  admins          AdminUser[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// Section 25 — services must be explicitly entered, never invented
+model Service {
+  id        String   @id @default(cuid())
+  doctorId  String
+  doctor    Doctor   @relation(fields: [doctorId], references: [id])
+  category  String   // "Obstetrics" | "Gynaecology" | "Other"
+  name      String
+  description String? @db.Text
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([doctorId])
+}
+
+// ------------------------------------------------------------
+// Practice locations & schedule (Sections 5, 6, 37, 50)
+// ------------------------------------------------------------
+
+model PracticeLocation {
+  id        String   @id @default(cuid())
+  doctorId  String
+  doctor    Doctor   @relation(fields: [doctorId], references: [id])
+
+  name      String   // e.g. "Nirmala Multi Specialty Hospital"
+  address   String?
+  city      String?
+  state     String?
+  phone     String?
+  mapUrl    String?
+  active    Boolean  @default(true) // only active locations shown to patients (Step 2, Sec 8)
+
+  schedules  Schedule[]
+  exceptions ScheduleException[]
+  appointments Appointment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([doctorId])
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum Session {
+  MORNING
+  AFTERNOON
+  EVENING
+}
+
+// The configurable weekly template described in Section 6 —
+// replaces any hard-coded "Tuesday = Hospital A" logic.
+model Schedule {
+  id          String           @id @default(cuid())
+  locationId  String
+  location    PracticeLocation @relation(fields: [locationId], references: [id])
+
+  dayOfWeek   DayOfWeek
+  session     Session
+  startTime   String   // "09:00" — stored as string (HH:mm) to avoid timezone issues; validated by Zod
+  endTime     String   // "13:00"
+  slotMinutes Int      @default(30) // consultation slot granularity, admin-configurable
+  active      Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([locationId, dayOfWeek])
+}
+
+enum ScheduleExceptionType {
+  BLOCKED       // Section 49 — doctor unavailable
+  SPECIAL_HOURS // Section 50 — override normal hours for one date
+}
+
+model ScheduleException {
+  id         String                @id @default(cuid())
+  locationId String
+  location   PracticeLocation      @relation(fields: [locationId], references: [id])
+
+  date       DateTime              @db.Date
+  type       ScheduleExceptionType
+  startTime  String?               // required when type = SPECIAL_HOURS; null covers the whole day when BLOCKED
+  endTime    String?
+  reason     String?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([locationId, date])
+}
+
+// ------------------------------------------------------------
+// Patients (Sections 9, 10, 21, 37, 40)
+// ------------------------------------------------------------
+
+model Patient {
+  id        String   @id @default(cuid())
+  fullName  String
+  phone     String   // required (Section 9) — validated as 10-digit Indian mobile at the API layer
+  email     String?  // optional (Section 9)
+  address   String?
+  age       Int?     // age preferred over DOB per Section 37 data-minimization note
+  gender    String?
+
+  medicalHistory MedicalHistory?
+  appointments   Appointment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([phone])
+}
+
+// One-to-one, optional (Section 10) — never required to book
+model MedicalHistory {
+  id                   String   @id @default(cuid())
+  patientId            String   @unique
+  patient              Patient  @relation(fields: [patientId], references: [id])
+
+  previousPregnancies  String?  @db.Text
+  previousSurgeries    String?  @db.Text
+  medicalConditions    String?  @db.Text
+  currentMedications   String?  @db.Text
+  allergies            String?  @db.Text
+  additionalNotes      String?  @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ------------------------------------------------------------
+// Appointments — the core state machine (Sections 3, 13, 37, 43-46)
+// ------------------------------------------------------------
+
+enum AppointmentStatus {
+  REQUESTED
+  UNDER_REVIEW
+  CONFIRMED
+  REJECTED
+  RESCHEDULE_REQUESTED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum CancelledBy {
+  DOCTOR
+  PATIENT
+}
+
+model Appointment {
+  id              String            @id @default(cuid())
+  referenceNumber String            @unique // e.g. "BRH-2026-001284" (Section 21)
+
+  patientId       String
+  patient         Patient           @relation(fields: [patientId], references: [id])
+
+  locationId      String
+  location        PracticeLocation  @relation(fields: [locationId], references: [id])
+
+  reason          String            // category from Section 9, or "Other" + free text
+  reasonDetail    String?           @db.Text
+
+  requestedDate   DateTime          @db.Date
+  requestedTime   String            // "10:30" — the patient's preference, never guaranteed (Section 8)
+
+  confirmedDate   DateTime?         @db.Date // set only on ACCEPT (Section 16)
+  confirmedTime   String?
+
+  status          AppointmentStatus @default(REQUESTED)
+
+  doctorNotes     String?           @db.Text // internal only — never sent to patient (Section 17)
+  patientNotes    String?           @db.Text // patient-visible notes, e.g. reschedule message
+
+  rejectionReason String?           // Section 17 categories
+  cancelledBy     CancelledBy?
+  cancellationReason String?
+
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  auditLogs       AuditLog[]
+
+  // Prevents two CONFIRMED appointments from ever occupying the same
+  // location/date/time slot. This is the last line of defence behind
+  // the application-level check in Section 45/46 — a partial unique
+  // index like this must be created via a raw migration since Prisma
+  // doesn't yet support partial indexes natively:
+  //
+  //   CREATE UNIQUE INDEX appointment_confirmed_slot_unique
+  //   ON "Appointment" ("locationId", "confirmedDate", "confirmedTime")
+  //   WHERE status = 'CONFIRMED';
+  //
+  @@index([locationId, requestedDate])
+  @@index([status])
+  @@index([patientId])
+}
+
+// ------------------------------------------------------------
+// Audit log (Section 38, 39)
+// ------------------------------------------------------------
+
+enum AuditAction {
+  APPOINTMENT_VIEWED
+  APPOINTMENT_ACCEPTED
+  APPOINTMENT_REJECTED
+  APPOINTMENT_RESCHEDULED
+  APPOINTMENT_CANCELLED
+  PATIENT_DATA_UPDATED
+  SCHEDULE_UPDATED
+  ADMIN_LOGIN
+}
+
+model AuditLog {
+  id            String       @id @default(cuid())
+  userId        String
+  user          AdminUser    @relation(fields: [userId], references: [id])
+
+  action        AuditAction
+  appointmentId String?
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+
+  metadata      Json?        // free-form context (e.g. previous status); never store medical history here (Section 39)
+  timestamp     DateTime     @default(now())
+
+  @@index([appointmentId])
+  @@index([userId])
+}
+
+// ------------------------------------------------------------
+// Notification log (Section 20, 53, 54) — abstraction over the
+// channel so SMS/WhatsApp can be added in V3 without a schema change.
+// ------------------------------------------------------------
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum NotificationType {
+  REQUEST_RECEIVED
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_REJECTED
+  RESCHEDULE_REQUESTED
+  APPOINTMENT_CANCELLED
+}
+
+model Notification {
+  id            String              @id @default(cuid())
+  appointmentId String
+  channel       NotificationChannel
+  type          NotificationType
+  recipient     String              // email address or phone number
+  sentAt        DateTime?
+  status        String              @default("PENDING") // PENDING | SENT | FAILED
+  error         String?
+
+  createdAt     DateTime @default(now())
+
+  @@index([appointmentId])
+}
