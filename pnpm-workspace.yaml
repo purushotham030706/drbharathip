@@ -1,0 +1,10 @@
+packages:
+  - client
+  - server
+
+# Vite depends on esbuild's platform binary. Allow only this known build step.
+onlyBuiltDependencies:
+  - esbuild
+allowBuilds:
+  argon2: true
+  esbuild: true

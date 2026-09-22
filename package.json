@@ -1,0 +1,11 @@
+{
+  "name": "dr-bharathi-appointment-portal",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.21.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter client --filter server dev",
+    "build": "pnpm --filter client build && pnpm --filter server build",
+    "typecheck": "pnpm --filter client typecheck && pnpm --filter server typecheck"
+  }
+}
