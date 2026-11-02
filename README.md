@@ -18,5 +18,4 @@ The API health check will be available at `http://localhost:4000/api/health` aft
 ## Safety notes
 
 - Never place secrets in `client/.env`; Vite exposes all `VITE_*` variables to the browser.
-- The production deployment must use `www.<custom-domain>` and `api.<custom-domain>` under the same domain to preserve the approved `SameSite=Strict` session-cookie design.
 - Future schedule seed data must use `scheduleIsDemoData: true` until Dr. Bharathi has entered verified consultation hours in the admin dashboard.
